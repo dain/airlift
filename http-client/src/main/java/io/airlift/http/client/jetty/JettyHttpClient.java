@@ -43,6 +43,8 @@ import org.eclipse.jetty.client.util.BytesContentProvider;
 import org.eclipse.jetty.client.util.InputStreamResponseListener;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http2.client.HTTP2Client;
+import org.eclipse.jetty.http2.client.http.HttpClientTransportOverHTTP2;
 import org.eclipse.jetty.util.HttpCookieStore;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.Sweeper;
@@ -158,7 +160,14 @@ public class JettyHttpClient
             sslContextFactory.setKeyStorePassword(config.getKeyStorePassword());
         }
 
-        HttpClientTransportOverHTTP transport = new HttpClientTransportOverHTTP(2);
+        HttpClientTransport transport;
+        if (false) {
+            transport = new HttpClientTransportOverHTTP(2);
+        }
+        else {
+            HTTP2Client client = new HTTP2Client();
+            transport = new HttpClientTransportOverHTTP2(client);
+        }
         if (authenticationEnabled) {
             requireNonNull(kerberosConfig.getConfig(), "kerberos config path is null");
             requireNonNull(config.getKerberosRemoteServiceName(), "kerberos remote service name is null");
