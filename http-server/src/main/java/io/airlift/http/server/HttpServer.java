@@ -22,6 +22,8 @@ import io.airlift.event.client.EventClient;
 import io.airlift.http.server.HttpServerBinder.HttpResourceBinding;
 import io.airlift.node.NodeInfo;
 import io.airlift.tracetoken.TraceTokenManager;
+import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory;
+import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
 import org.eclipse.jetty.jmx.MBeanContainer;
 import org.eclipse.jetty.security.ConstraintMapping;
 import org.eclipse.jetty.security.ConstraintSecurityHandler;
@@ -129,14 +131,16 @@ public class HttpServer
 
             Integer acceptors = config.getHttpAcceptorThreads();
             Integer selectors = config.getHttpSelectorThreads();
-            httpConnector = new ServerConnector(server, null, null, null, acceptors == null ? -1 : acceptors, selectors == null ? -1 : selectors, new HttpConnectionFactory(httpConfiguration));
-            httpConnector.setName("http");
-            httpConnector.setPort(httpServerInfo.getHttpUri().getPort());
-            httpConnector.setIdleTimeout(config.getNetworkMaxIdleTime().toMillis());
-            httpConnector.setHost(nodeInfo.getBindIp().getHostAddress());
-            httpConnector.setAcceptQueueSize(config.getHttpAcceptQueueSize());
+            HttpConnectionFactory http1 = new HttpConnectionFactory(httpConfiguration);
+            HTTP2CServerConnectionFactory http2c = new HTTP2CServerConnectionFactory(httpConfiguration);
+            this.httpConnector = new ServerConnector(server, null, null, null, acceptors == null ? -1 : acceptors, selectors == null ? -1 : selectors, http1, http2c);
+            this.httpConnector.setName("http");
+            this.httpConnector.setPort(httpServerInfo.getHttpUri().getPort());
+            this.httpConnector.setIdleTimeout(config.getNetworkMaxIdleTime().toMillis());
+            this.httpConnector.setHost(nodeInfo.getBindIp().getHostAddress());
+            this.httpConnector.setAcceptQueueSize(config.getHttpAcceptQueueSize());
 
-            server.addConnector(httpConnector);
+            server.addConnector(this.httpConnector);
         } else {
             httpConnector = null;
         }
@@ -157,7 +161,18 @@ public class HttpServer
 
             Integer acceptors = config.getHttpsAcceptorThreads();
             Integer selectors = config.getHttpsSelectorThreads();
-            httpsConnector = new ServerConnector(server, null, null, null, acceptors == null ? -1 : acceptors, selectors == null ? -1 : selectors, sslConnectionFactory, new HttpConnectionFactory(httpsConfiguration));
+            HttpConnectionFactory http1 = new HttpConnectionFactory(httpsConfiguration);
+            HTTP2ServerConnectionFactory http2 = new HTTP2ServerConnectionFactory(httpsConfiguration);
+            httpsConnector = new ServerConnector(
+                    server,
+                    null,
+                    null,
+                    null,
+                    acceptors == null ? -1 : acceptors,
+                    selectors == null ? -1 : selectors,
+                    sslConnectionFactory,
+                    http1,
+                    http2);
             httpsConnector.setName("https");
             httpsConnector.setPort(httpServerInfo.getHttpsUri().getPort());
             httpsConnector.setIdleTimeout(config.getNetworkMaxIdleTime().toMillis());
@@ -189,9 +204,22 @@ public class HttpServer
                 SslContextFactory sslContextFactory = new SslContextFactory(config.getKeystorePath());
                 sslContextFactory.setKeyStorePassword(config.getKeystorePassword());
                 SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(sslContextFactory, "http/1.1");
-                adminConnector = new ServerConnector(server, adminThreadPool, null, null, 0, -1, sslConnectionFactory, new HttpConnectionFactory(adminConfiguration));
+                HttpConnectionFactory http1 = new HttpConnectionFactory(adminConfiguration);
+                HTTP2ServerConnectionFactory http2 = new HTTP2ServerConnectionFactory(adminConfiguration);
+                adminConnector = new ServerConnector(
+                        server,
+                        adminThreadPool,
+                        null,
+                        null,
+                        -1,
+                        -1,
+                        sslConnectionFactory,
+                        http1,
+                        http2);
             } else {
-                adminConnector = new ServerConnector(server, adminThreadPool, null, null, 0, -1, new HttpConnectionFactory(adminConfiguration));
+                HttpConnectionFactory http1 = new HttpConnectionFactory(adminConfiguration);
+                HTTP2CServerConnectionFactory http2c = new HTTP2CServerConnectionFactory(adminConfiguration);
+                adminConnector = new ServerConnector(server, adminThreadPool, null, null, -1, -1, http1, http2c);
             }
 
             adminConnector.setName("admin");
