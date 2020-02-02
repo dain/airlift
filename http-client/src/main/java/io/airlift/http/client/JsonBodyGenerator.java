@@ -15,13 +15,22 @@
  */
 package io.airlift.http.client;
 
-import com.google.common.annotations.Beta;
 import io.airlift.json.JsonCodec;
 
-@Beta
+import javax.annotation.concurrent.GuardedBy;
+
+import java.io.OutputStream;
+
+import static java.util.Objects.requireNonNull;
+
 public class JsonBodyGenerator<T>
-        extends StaticBodyGenerator
+        implements BodyGenerator
 {
+    private final JsonCodec<T> jsonCodec;
+    private final T instance;
+    @GuardedBy("this")
+    private byte[] body;
+
     public static <T> JsonBodyGenerator<T> jsonBodyGenerator(JsonCodec<T> jsonCodec, T instance)
     {
         return new JsonBodyGenerator<>(jsonCodec, instance);
@@ -29,6 +38,35 @@ public class JsonBodyGenerator<T>
 
     private JsonBodyGenerator(JsonCodec<T> jsonCodec, T instance)
     {
-        super(jsonCodec.toJsonBytes(instance));
+        requireNonNull(jsonCodec, "jsonCodec is null");
+        requireNonNull(instance, "instance is null");
+
+        this.jsonCodec = jsonCodec;
+        this.instance = instance;
+    }
+
+    public T getInstance()
+    {
+        return instance;
+    }
+
+    public JsonCodec<T> getJsonCodec()
+    {
+        return jsonCodec;
+    }
+
+    public synchronized byte[] getBody()
+    {
+        if (body == null) {
+            body = jsonCodec.toJsonBytes(instance);
+        }
+        return body;
+    }
+
+    @Override
+    public void write(OutputStream out)
+            throws Exception
+    {
+        out.write(getBody());
     }
 }
