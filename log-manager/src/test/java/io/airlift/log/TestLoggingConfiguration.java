@@ -32,7 +32,6 @@ public class TestLoggingConfiguration
                 .setConsoleEnabled(true)
                 .setLogPath(null)
                 .setMaxSize(new DataSize(100, DataSize.Unit.MEGABYTE))
-                .setMaxSizeInBytes(new DataSize(100, DataSize.Unit.MEGABYTE).toBytes())
                 .setMaxHistory(30)
                 .setLevelsFile(null));
     }
@@ -44,7 +43,6 @@ public class TestLoggingConfiguration
                 .put("log.enable-console", "false")
                 .put("log.path", "/tmp/log.log")
                 .put("log.max-size", "1kB")
-                .put("log.max-size-in-bytes", "1024")
                 .put("log.max-history", "3")
                 .put("log.levels-file", "/tmp/levels.txt")
                 .build();
@@ -53,7 +51,6 @@ public class TestLoggingConfiguration
                 .setConsoleEnabled(false)
                 .setLogPath("/tmp/log.log")
                 .setMaxSize(new DataSize(1, KILOBYTE))
-                .setMaxSizeInBytes(1024)
                 .setMaxHistory(3)
                 .setLevelsFile("/tmp/levels.txt");
 
