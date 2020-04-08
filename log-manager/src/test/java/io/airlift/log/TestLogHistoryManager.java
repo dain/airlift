@@ -141,7 +141,7 @@ public class TestLogHistoryManager
     private static LogFileName createTestFile(Path masterLogName)
             throws IOException
     {
-        LogFileName logFileName = LogFileName.newLogFileName(masterLogName, Optional.empty());
+        LogFileName logFileName = LogFileName.generateNextLogFileName(masterLogName, Optional.empty());
         Files.write(masterLogName.resolveSibling(logFileName.getFileName()), new byte[FILE_SIZE], CREATE_NEW);
         return logFileName;
     }

@@ -131,26 +131,26 @@ public class TestLogFileName
     }
 
     @Test
-    public void testNewFileName()
+    public void testGenerateNextLogFileName()
     {
         // note: no actual files are created here
-        LogFileName logFileName = LogFileName.newLogFileName(Paths.get(BASE_NAME), Optional.empty());
+        LogFileName logFileName = LogFileName.generateNextLogFileName(Paths.get(BASE_NAME), Optional.empty());
         assertEquals(logFileName.getIndex(), OptionalInt.of(0));
         assertEquals(logFileName.getLegacyIndex(), OptionalInt.empty());
 
         // verify the name round trips
-        assertEqualOrdering(LogFileName.forName(BASE_NAME, logFileName.getFileName()).orElseThrow(AssertionError::new), logFileName);
+        assertEqualOrdering(LogFileName.parseHistoryLogFileName(BASE_NAME, logFileName.getFileName()).orElseThrow(AssertionError::new), logFileName);
     }
 
     private static LogFileName createLogFile(String suffix)
     {
-        return LogFileName.forName(BASE_NAME, BASE_NAME + "-" + suffix).orElseThrow(AssertionError::new);
+        return LogFileName.parseHistoryLogFileName(BASE_NAME, BASE_NAME + "-" + suffix).orElseThrow(AssertionError::new);
     }
 
     private static void assertLogFile(String suffix, LocalDateTime dateTime, OptionalInt index, OptionalInt legacyIndex, boolean compressed)
     {
         Path path = Paths.get(BASE_NAME + "-" + suffix);
-        Optional<LogFileName> logFile = LogFileName.forName(BASE_NAME, path.getFileName().toString());
+        Optional<LogFileName> logFile = LogFileName.parseHistoryLogFileName(BASE_NAME, path.getFileName().toString());
         assertTrue(logFile.isPresent());
         assertEquals(logFile.get().getDateTime(), dateTime);
         assertEquals(logFile.get().getIndex(), index);

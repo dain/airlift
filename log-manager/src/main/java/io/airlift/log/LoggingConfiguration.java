@@ -137,9 +137,9 @@ public class LoggingConfiguration
     }
 
     @Config("log.legacy-implementation.enabled")
-    public LoggingConfiguration setLegacyLoggerImplementationEnabled(boolean legacyLoggerImplementationEnabled)
+    public LoggingConfiguration setLegacyLoggerImplementationEnabled(boolean enabled)
     {
-        this.legacyLoggerImplementationEnabled = legacyLoggerImplementationEnabled;
+        this.legacyLoggerImplementationEnabled = enabled;
         return this;
     }
 }

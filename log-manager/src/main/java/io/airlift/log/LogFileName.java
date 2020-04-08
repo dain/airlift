@@ -31,10 +31,11 @@ import static java.lang.Integer.parseInt;
 import static java.util.Objects.requireNonNull;
 import static java.util.UUID.randomUUID;
 
-public class LogFileName
+class LogFileName
         implements Comparable<LogFileName>
 {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("-yyyyMMdd.HHmmss");
+    private static final int MAX_GENERATED_INDEX = 1000;
 
     private final String fileName;
     private final LocalDateTime dateTime;
@@ -43,15 +44,22 @@ public class LogFileName
     private final Optional<String> slug;
     private final boolean compressed;
 
-    public static Optional<LogFileName> forName(String baseName, String fileName)
+    /**
+     * Attempts to parse a log file name that is part of the history files for the master log file.
+     *
+     * @param masterLogFileName the main file of the logger
+     * @param historyFileName the history file name to parse
+     * @return a present value if the file name is part of the history set
+     */
+    public static Optional<LogFileName> parseHistoryLogFileName(String masterLogFileName, String historyFileName)
     {
-        requireNonNull(baseName, "baseName is null");
-        requireNonNull(fileName, "fileName is null");
-        if (!fileName.startsWith(baseName + "-")) {
+        requireNonNull(masterLogFileName, "masterLogFileName is null");
+        requireNonNull(historyFileName, "historyFileName is null");
+        if (!historyFileName.startsWith(masterLogFileName + "-")) {
             return Optional.empty();
         }
 
-        String remainder = fileName.substring(baseName.length() + 1);
+        String remainder = historyFileName.substring(masterLogFileName.length() + 1);
 
         boolean compressed = remainder.endsWith(".gz");
         if (compressed) {
@@ -89,7 +97,7 @@ public class LogFileName
                 slug = Optional.of(parts.get(3));
             }
 
-            return Optional.of(new LogFileName(fileName, dateTime, OptionalInt.empty(), OptionalInt.of(legacyIndex), slug, compressed));
+            return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.empty(), OptionalInt.of(legacyIndex), slug, compressed));
         }
         else {
             // yyyyMMdd.HHmmss-counter
@@ -128,15 +136,15 @@ public class LogFileName
                     slug = Optional.of(parts.get(2));
                 }
             }
-            return Optional.of(new LogFileName(fileName, dateTime, OptionalInt.of(index), OptionalInt.empty(), slug, compressed));
+            return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.of(index), OptionalInt.empty(), slug, compressed));
         }
     }
 
-    public static LogFileName newLogFileName(Path masterLogFile, Optional<String> compressionExtension)
+    public static LogFileName generateNextLogFileName(Path masterLogFile, Optional<String> compressionExtension)
     {
         LocalDateTime dateTime = LocalDateTime.now().withNano(0);
         String suffix = DATE_TIME_FORMATTER.format(dateTime);
-        for (int index = 0; index < 1000; index++) {
+        for (int index = 0; index < MAX_GENERATED_INDEX; index++) {
             String newFileName = masterLogFile.getFileName() + suffix + (index > 0 ? "-" + index : "");
             Path newFile = masterLogFile.resolveSibling(newFileName);
             if (!fileAlreadyExists(newFile, compressionExtension)) {

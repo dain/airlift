@@ -103,7 +103,7 @@ final class LogHistoryManager
 
     private Optional<LogFile> createLogFile(Path path)
     {
-        Optional<LogFileName> logFileName = LogFileName.forName(masterLogFile.getFileName().toString(), path.getFileName().toString());
+        Optional<LogFileName> logFileName = LogFileName.parseHistoryLogFileName(masterLogFile.getFileName().toString(), path.getFileName().toString());
         if (!logFileName.isPresent()) {
             return Optional.empty();
         }

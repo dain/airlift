@@ -62,9 +62,11 @@ import static java.util.logging.ErrorManager.GENERIC_FAILURE;
 import static java.util.logging.ErrorManager.OPEN_FAILURE;
 import static java.util.logging.ErrorManager.WRITE_FAILURE;
 
-public final class RollingFileHandler
+final class RollingFileHandler
         extends Handler
 {
+    private static final int MAX_OPEN_NEW_LOG_ATTEMPTS = 100;
+
     public enum CompressionType
     {
         NONE(Optional.empty()),
@@ -91,6 +93,8 @@ public final class RollingFileHandler
 
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("-yyyyMMdd.HHmmss");
 
+    private static final byte[] POISON_MESSAGE = new byte[0];
+
     private final Path link;
     private final long maxFileSize;
     private final CompressionType compressionType;
@@ -103,9 +107,8 @@ public final class RollingFileHandler
     private OutputStream currentOutputStream;
     @GuardedBy("this")
     private long currentFileSize;
-    private final LogHistoryManager logHistoryManager;
+    private final LogHistoryManager historyManager;
 
-    private final byte[] poisonMessage = new byte[0];
     private final BlockingQueue<byte[]> queue = new ArrayBlockingQueue<>(MAX_BATCH_COUNT);
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Thread thread;
@@ -156,6 +159,9 @@ public final class RollingFileHandler
             try {
                 // if existing link file is a legacy log file, rename it to so link file can be recreated as a symlink
                 BasicFileAttributes attributes = Files.readAttributes(link, BasicFileAttributes.class);
+                if (attributes.isDirectory()) {
+                    throw new IllegalArgumentException("Log file is an existing directory: " + filename);
+                }
                 if (attributes.isRegularFile()) {
                     LocalDateTime createTime = LocalDateTime.ofInstant(attributes.creationTime().toInstant(), ZoneId.systemDefault()).withNano(0);
                     Path logFile = link.resolveSibling(link.getFileName() + DATE_TIME_FORMATTER.format(createTime) + "--" + randomUUID());
@@ -169,7 +175,7 @@ public final class RollingFileHandler
 
         tryCleanupTempFiles(link);
 
-        logHistoryManager = new LogHistoryManager(link, maxTotalSize);
+        historyManager = new LogHistoryManager(link, maxTotalSize);
 
         // open initial log file
         try {
@@ -198,7 +204,7 @@ public final class RollingFileHandler
     public synchronized Set<LogFileName> getFiles()
     {
         ImmutableSet.Builder<LogFileName> objectBuilder = ImmutableSet.<LogFileName>builder()
-                .addAll(logHistoryManager.getFiles());
+                .addAll(historyManager.getFiles());
         if (currentOutputFileName != null) {
             objectBuilder.add(currentOutputFileName);
         }
@@ -260,7 +266,7 @@ public final class RollingFileHandler
     {
         closed.set(true);
 
-        putUninterruptibly(queue, poisonMessage);
+        putUninterruptibly(queue, POISON_MESSAGE);
 
         // wait for logging to finish
         try {
@@ -345,7 +351,7 @@ public final class RollingFileHandler
     private int getPoisonMessageIndex(List<byte[]> messages)
     {
         for (int i = 0; i < messages.size(); i++) {
-            if (messages.get(i) == poisonMessage) {
+            if (messages.get(i) == POISON_MESSAGE) {
                 return i;
             }
         }
@@ -368,7 +374,7 @@ public final class RollingFileHandler
                 }
             }
 
-            logHistoryManager.pruneLogFilesIfNecessary(currentFileSize + message.length);
+            historyManager.pruneLogFilesIfNecessary(currentFileSize + message.length);
 
             currentFileSize += message.length;
             try {
@@ -390,9 +396,9 @@ public final class RollingFileHandler
         LogFileName newFileName = null;
         Path newFile = null;
         OutputStream newOutputStream = null;
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < MAX_OPEN_NEW_LOG_ATTEMPTS; i++) {
             try {
-                newFileName = LogFileName.newLogFileName(link, compressionType.getExtension());
+                newFileName = LogFileName.generateNextLogFileName(link, compressionType.getExtension());
                 newFile = link.resolveSibling(newFileName.getFileName());
                 newOutputStream = new BufferedOutputStream(Files.newOutputStream(newFile, CREATE_NEW), MAX_BATCH_BYTES);
                 break;
@@ -403,21 +409,22 @@ public final class RollingFileHandler
 
         // If a new file can not be opened, abort and continue using the existing file
         if (newOutputStream == null) {
-            throw new IOException("Could not create new a unique log file");
+            throw new IOException("Could not create new a unique log file: " + newFile);
         }
 
         // The new file is open, so we will always switch to this new output stream
         // If any error occurs, with the cleanup steps, we add them to this exception as suppressed and throw at the end
         IOException exception = new IOException(String.format("Unable to %s log file", currentOutputStream == null ? "setup initial" : "roll"));
 
+        // close and optionally compress the currently open log (there is no open log during initial setup)
         if (currentOutputStream != null) {
             try {
                 currentOutputStream.close();
             }
             catch (IOException e) {
-                exception.addSuppressed(new IOException("Unable to close old output stream", e));
+                exception.addSuppressed(new IOException("Unable to close old output stream: " + currentOutputFile, e));
             }
-            logHistoryManager.addFile(currentOutputFile, currentOutputFileName, currentFileSize);
+            historyManager.addFile(currentOutputFile, currentOutputFileName, currentFileSize);
             if (compressionExecutor != null) {
                 Path originalFile = currentOutputFile;
                 LogFileName originalLogFileName = currentOutputFileName;
@@ -478,7 +485,7 @@ public final class RollingFileHandler
         // file movement must be done while holding the lock to ensure there isn't a roll during the movement
         synchronized (this) {
             // remove the original file from the history manager
-            if (!logHistoryManager.removeFile(originalFile)) {
+            if (!historyManager.removeFile(originalFile)) {
                 // file was removed during compression
                 try {
                     Files.deleteIfExists(tempFile);
@@ -498,7 +505,7 @@ public final class RollingFileHandler
             }
             catch (IOException e) {
                 // add the original file back to the history manager
-                logHistoryManager.addFile(originalFile, originalLogFileName, originalFileSize);
+                historyManager.addFile(originalFile, originalLogFileName, originalFileSize);
 
                 // move failed, delete the temp file
                 try {
@@ -508,7 +515,7 @@ public final class RollingFileHandler
                     // delete failed, system will attempt to delete temp files periodically
                 }
             }
-            logHistoryManager.addFile(compressedFile, compressedFileName, compressedSize);
+            historyManager.addFile(compressedFile, compressedFileName, compressedSize);
 
             // 3. Delete original file
             try {
@@ -542,7 +549,7 @@ public final class RollingFileHandler
                 else {
                     continue;
                 }
-                if (LogFileName.forName(masterLogFile.getFileName().toString(), fileNameWithoutPrefix).isPresent()) {
+                if (LogFileName.parseHistoryLogFileName(masterLogFile.getFileName().toString(), fileNameWithoutPrefix).isPresent()) {
                     // this is our temp or "to be deleted' file, so try to delete it
                     try {
                         Files.deleteIfExists(file);

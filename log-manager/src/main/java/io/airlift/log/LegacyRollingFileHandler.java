@@ -50,7 +50,7 @@ final class LegacyRollingFileHandler
                 Files.delete(Paths.get(filename));
             }
             catch (IOException e) {
-                throw new UncheckedIOException("Unable to remove symlink", e);
+                throw new UncheckedIOException("Unable to remove symlink: " + filename, e);
             }
         }
 
