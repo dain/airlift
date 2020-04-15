@@ -30,6 +30,7 @@ import java.util.Set;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
+import static io.airlift.log.LogFileName.parseHistoryLogFileName;
 import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
@@ -63,7 +64,7 @@ final class LogHistoryManager
                     .sum();
         }
         catch (IOException e) {
-            throw new UncheckedIOException("Unable to list existing log files", e);
+            throw new UncheckedIOException("Unable to list existing history log files for " + masterLogFile, e);
         }
         pruneLogFilesIfNecessary(0);
     }
@@ -87,23 +88,23 @@ final class LogHistoryManager
             if (logFile == null) {
                 break;
             }
+
+            // always reduce the cached total file size as we will either delete the file or stop tracking it
             totalSize -= logFile.getSize();
+
+            // attempt to delete the file which may fail, because the file was already deleted or is not deletable
+            // failure is ok as this is a best effort system
             try {
                 Files.deleteIfExists(logFile.getPath());
             }
             catch (IOException ignored) {
             }
         }
-
-        // just to be safe, re-calculate the total closed size
-        totalSize = files.stream()
-                .mapToLong(LogFile::getSize)
-                .sum();
     }
 
     private Optional<LogFile> createLogFile(Path path)
     {
-        Optional<LogFileName> logFileName = LogFileName.parseHistoryLogFileName(masterLogFile.getFileName().toString(), path.getFileName().toString());
+        Optional<LogFileName> logFileName = parseHistoryLogFileName(masterLogFile.getFileName().toString(), path.getFileName().toString());
         if (!logFileName.isPresent()) {
             return Optional.empty();
         }

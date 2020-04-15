@@ -31,7 +31,7 @@ import static java.lang.Integer.parseInt;
 import static java.util.Objects.requireNonNull;
 import static java.util.UUID.randomUUID;
 
-class LogFileName
+final class LogFileName
         implements Comparable<LogFileName>
 {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("-yyyyMMdd.HHmmss");
@@ -46,6 +46,9 @@ class LogFileName
 
     /**
      * Attempts to parse a log file name that is part of the history files for the master log file.
+     *
+     * New: mainName-yyyyMMdd.HHmmss.compressExtension
+     * Legacy: mainName-yyyyMMdd.HHmmss-counter.compressExtension
      *
      * @param masterLogFileName the main file of the logger
      * @param historyFileName the history file name to parse
@@ -72,72 +75,80 @@ class LogFileName
         }
 
         if (remainder.endsWith(".log")) {
-            // %d{yyyy-MM-dd}.%i.log
-            remainder = remainder.substring(0, remainder.length() - ".log".length());
+            return parseLegacyLogName(historyFileName, remainder, compressed);
+        }
+        return parseNewLogName(historyFileName, remainder, compressed);
+    }
 
-            List<String> parts = Splitter.on(anyOf(".-")).limit(4).splitToList(remainder);
-            if (parts.size() != 4) {
-                return Optional.empty();
-            }
+    private static Optional<LogFileName> parseNewLogName(String historyFileName, String remainder, boolean compressed)
+    {
+        // yyyyMMdd.HHmmss-counter
+        List<String> parts = Splitter.on(anyOf(".-")).limit(3).splitToList(remainder);
+        if (parts.size() < 2) {
+            return Optional.empty();
+        }
 
-            LocalDateTime dateTime;
+        String date = parts.get(0);
+        String time = parts.get(1);
+        if (date.length() != 8 || time.length() != 6) {
+            return Optional.empty();
+        }
+
+        LocalDateTime dateTime;
+        try {
+            dateTime = LocalDateTime.of(
+                    parseInt(date.substring(0, 4)),
+                    parseInt(date.substring(4, 6)),
+                    parseInt(date.substring(6, 8)),
+                    parseInt(time.substring(0, 2)),
+                    parseInt(time.substring(2, 4)),
+                    parseInt(time.substring(4, 6)));
+        }
+        catch (NumberFormatException | DateTimeException e) {
+            return Optional.empty();
+        }
+
+        int index = 0;
+        Optional<String> slug = Optional.empty();
+        if (parts.size() == 3) {
             try {
-                dateTime = LocalDateTime.of(parseInt(parts.get(0)), parseInt(parts.get(1)), parseInt(parts.get(2)), 0, 0);
-            }
-            catch (NumberFormatException | DateTimeException e) {
-                return Optional.empty();
-            }
-
-            int legacyIndex = -1;
-            Optional<String> slug = Optional.empty();
-            try {
-                legacyIndex = parseInt(parts.get(3));
+                index = parseInt(parts.get(2));
             }
             catch (NumberFormatException ignored) {
-                slug = Optional.of(parts.get(3));
+                slug = Optional.of(parts.get(2));
             }
-
-            return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.empty(), OptionalInt.of(legacyIndex), slug, compressed));
         }
-        else {
-            // yyyyMMdd.HHmmss-counter
-            List<String> parts = Splitter.on(anyOf(".-")).limit(3).splitToList(remainder);
-            if (parts.size() < 2) {
-                return Optional.empty();
-            }
+        return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.of(index), OptionalInt.empty(), slug, compressed));
+    }
 
-            String date = parts.get(0);
-            String time = parts.get(1);
-            if (date.length() != 8 || time.length() != 6) {
-                return Optional.empty();
-            }
+    private static Optional<LogFileName> parseLegacyLogName(String historyFileName, String remainder, boolean compressed)
+    {
+        // %d{yyyy-MM-dd}.%i.log
+        remainder = remainder.substring(0, remainder.length() - ".log".length());
 
-            LocalDateTime dateTime;
-            try {
-                dateTime = LocalDateTime.of(
-                        parseInt(date.substring(0, 4)),
-                        parseInt(date.substring(4, 6)),
-                        parseInt(date.substring(6, 8)),
-                        parseInt(time.substring(0, 2)),
-                        parseInt(time.substring(2, 4)),
-                        parseInt(time.substring(4, 6)));
-            }
-            catch (NumberFormatException | DateTimeException e) {
-                return Optional.empty();
-            }
-
-            int index = 0;
-            Optional<String> slug = Optional.empty();
-            if (parts.size() == 3) {
-                try {
-                    index = parseInt(parts.get(2));
-                }
-                catch (NumberFormatException ignored) {
-                    slug = Optional.of(parts.get(2));
-                }
-            }
-            return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.of(index), OptionalInt.empty(), slug, compressed));
+        List<String> parts = Splitter.on(anyOf(".-")).limit(4).splitToList(remainder);
+        if (parts.size() != 4) {
+            return Optional.empty();
         }
+
+        LocalDateTime dateTime;
+        try {
+            dateTime = LocalDateTime.of(parseInt(parts.get(0)), parseInt(parts.get(1)), parseInt(parts.get(2)), 0, 0);
+        }
+        catch (NumberFormatException | DateTimeException e) {
+            return Optional.empty();
+        }
+
+        int legacyIndex = -1;
+        Optional<String> slug = Optional.empty();
+        try {
+            legacyIndex = parseInt(parts.get(3));
+        }
+        catch (NumberFormatException ignored) {
+            slug = Optional.of(parts.get(3));
+        }
+
+        return Optional.of(new LogFileName(historyFileName, dateTime, OptionalInt.empty(), OptionalInt.of(legacyIndex), slug, compressed));
     }
 
     public static LogFileName generateNextLogFileName(Path masterLogFile, Optional<String> compressionExtension)

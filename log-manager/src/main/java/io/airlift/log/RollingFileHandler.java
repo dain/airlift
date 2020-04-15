@@ -41,7 +41,6 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Handler;
@@ -55,6 +54,7 @@ import static java.nio.file.StandardCopyOption.ATOMIC_MOVE;
 import static java.nio.file.StandardOpenOption.CREATE_NEW;
 import static java.util.Objects.requireNonNull;
 import static java.util.UUID.randomUUID;
+import static java.util.concurrent.Executors.newSingleThreadExecutor;
 import static java.util.logging.ErrorManager.CLOSE_FAILURE;
 import static java.util.logging.ErrorManager.FLUSH_FAILURE;
 import static java.util.logging.ErrorManager.FORMAT_FAILURE;
@@ -65,8 +65,6 @@ import static java.util.logging.ErrorManager.WRITE_FAILURE;
 final class RollingFileHandler
         extends Handler
 {
-    private static final int MAX_OPEN_NEW_LOG_ATTEMPTS = 100;
-
     public enum CompressionType
     {
         NONE(Optional.empty()),
@@ -85,6 +83,7 @@ final class RollingFileHandler
         }
     }
 
+    private static final int MAX_OPEN_NEW_LOG_ATTEMPTS = 100;
     private static final int MAX_BATCH_COUNT = 1024;
     private static final int MAX_BATCH_BYTES = toIntExact(new DataSize(1, MEGABYTE).toBytes());
 
@@ -95,7 +94,7 @@ final class RollingFileHandler
 
     private static final byte[] POISON_MESSAGE = new byte[0];
 
-    private final Path link;
+    private final Path symlink;
     private final long maxFileSize;
     private final CompressionType compressionType;
 
@@ -132,7 +131,7 @@ final class RollingFileHandler
         this.maxFileSize = maxFileSize.toBytes();
         this.compressionType = compressionType;
 
-        link = Paths.get(filename);
+        symlink = Paths.get(filename);
 
         thread = new Thread(this::logging);
         thread.setName("log-writer");
@@ -142,7 +141,7 @@ final class RollingFileHandler
 
         // ensure log directory can be created
         try {
-            MoreFiles.createParentDirectories(link);
+            MoreFiles.createParentDirectories(symlink);
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -155,17 +154,17 @@ final class RollingFileHandler
         catch (IOException e) {
             reportError(null, e, OPEN_FAILURE);
         }
-        if (Files.exists(link)) {
+        if (Files.exists(symlink)) {
             try {
                 // if existing link file is a legacy log file, rename it to so link file can be recreated as a symlink
-                BasicFileAttributes attributes = Files.readAttributes(link, BasicFileAttributes.class);
+                BasicFileAttributes attributes = Files.readAttributes(symlink, BasicFileAttributes.class);
                 if (attributes.isDirectory()) {
                     throw new IllegalArgumentException("Log file is an existing directory: " + filename);
                 }
                 if (attributes.isRegularFile()) {
                     LocalDateTime createTime = LocalDateTime.ofInstant(attributes.creationTime().toInstant(), ZoneId.systemDefault()).withNano(0);
-                    Path logFile = link.resolveSibling(link.getFileName() + DATE_TIME_FORMATTER.format(createTime) + "--" + randomUUID());
-                    Files.move(link, logFile, ATOMIC_MOVE);
+                    Path logFile = symlink.resolveSibling(symlink.getFileName() + DATE_TIME_FORMATTER.format(createTime) + "--" + randomUUID());
+                    Files.move(symlink, logFile, ATOMIC_MOVE);
                 }
             }
             catch (IOException e) {
@@ -173,9 +172,9 @@ final class RollingFileHandler
             }
         }
 
-        tryCleanupTempFiles(link);
+        tryCleanupTempFiles(symlink);
 
-        historyManager = new LogHistoryManager(link, maxTotalSize);
+        historyManager = new LogHistoryManager(symlink, maxTotalSize);
 
         // open initial log file
         try {
@@ -186,7 +185,7 @@ final class RollingFileHandler
         }
 
         if (compressionType != CompressionType.NONE) {
-            compressionExecutor = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()
+            compressionExecutor = newSingleThreadExecutor(new ThreadFactoryBuilder()
                     .setDaemon(true)
                     .setNameFormat("log-compression-%d")
                     .build());
@@ -348,7 +347,7 @@ final class RollingFileHandler
         }
     }
 
-    private int getPoisonMessageIndex(List<byte[]> messages)
+    private static int getPoisonMessageIndex(List<byte[]> messages)
     {
         for (int i = 0; i < messages.size(); i++) {
             if (messages.get(i) == POISON_MESSAGE) {
@@ -366,8 +365,8 @@ final class RollingFileHandler
                     rollFile();
                 }
                 catch (IOException e) {
-                    // it is possible the roll worked, but there was a problem cleaning up, and it is possible it failed
-                    // either way, roll will be attempted again once file grows by maxFileSize
+                    // It is possible the roll worked, but there was a problem cleaning up, and it is possible it failed;
+                    // Either way, roll will be attempted again once file grows by maxFileSize.
                     currentFileSize = 0;
 
                     reportError("Error rolling log file", e, GENERIC_FAILURE);
@@ -398,8 +397,8 @@ final class RollingFileHandler
         OutputStream newOutputStream = null;
         for (int i = 0; i < MAX_OPEN_NEW_LOG_ATTEMPTS; i++) {
             try {
-                newFileName = LogFileName.generateNextLogFileName(link, compressionType.getExtension());
-                newFile = link.resolveSibling(newFileName.getFileName());
+                newFileName = LogFileName.generateNextLogFileName(symlink, compressionType.getExtension());
+                newFile = symlink.resolveSibling(newFileName.getFileName());
                 newOutputStream = new BufferedOutputStream(Files.newOutputStream(newFile, CREATE_NEW), MAX_BATCH_BYTES);
                 break;
             }
@@ -440,10 +439,10 @@ final class RollingFileHandler
 
         // update symlink
         try {
-            if (Files.exists(link)) {
-                Files.delete(link);
+            if (Files.exists(symlink)) {
+                Files.delete(symlink);
             }
-            Files.createSymbolicLink(link, newFile);
+            Files.createSymbolicLink(symlink, newFile);
         }
         catch (IOException e) {
             exception.addSuppressed(new IOException("Unable to update symlink", e));
@@ -456,7 +455,7 @@ final class RollingFileHandler
 
     private void compressInternal(Path originalFile, LogFileName originalLogFileName, long originalFileSize)
     {
-        tryCleanupTempFiles(link);
+        tryCleanupTempFiles(symlink);
 
         String compressionExtension = compressionType.getExtension().orElseThrow(IllegalStateException::new);
 
